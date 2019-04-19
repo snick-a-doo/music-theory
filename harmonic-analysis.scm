@@ -4,21 +4,25 @@
 
 ;;; Utilities
 
-;; Return lst with repeated (eq?) elements removed.
+;; Return lst with repeated elements removed.
 (define (unique lst)
   (define (unique-tail lst out)
     (cond ((null? lst)
            (reverse out))
           ((or (null? out)
-               (not (eq? (car lst) (car out))))
+               (not (equal? (car lst) (car out))))
            (unique-tail (cdr lst) (cons (car lst) out)))
           (else
            (unique-tail (cdr lst) out))))
   (unique-tail lst '()))
 
 ;; Return the differences in adjacent elements of lst.
-(define (diff lst)
-  (map - (cdr lst) lst))
+(define (pair-diff lst)
+  (map (lambda (p1 p2)
+         (cons (- (car p1) (car p2))
+               (- (cdr p1) (cdr p2))))
+       (cdr lst)
+       lst))
 
 ;; If sub is a sublist of lst, return the index of the 1st occurrence of sub,
 ;; else return #f.
@@ -33,20 +37,38 @@
              (find (cdr lst) (+ n 1)))))
     (find lst 0)))
 
-;;; Analysis
+;; Match target to the circularly-extended cdrs of the elements of alist with match-lists.  If
+;; a match is found, return the car of alist and the index of the match.  Return #f for both if
+;; a match is not found.
+(define (look-up target alist)
+  (define (extend lst)
+    (append lst (take lst (- (length lst) 2))))
+  (define (match? alist)
+    (and (pair? alist)
+         (match-lists target (extend (cdar alist)))))
+  (define (look-up-inner alist)
+    (let ((index (match? alist)))
+      (cond ((null? alist)
+             (values #f #f))
+            (index
+             (values (caar alist) index))
+            (else
+             (look-up-inner (cdr alist))))))
+  (look-up-inner alist))
 
-;; Degrees and half-steps from C. Notes are encoded as the number of half steps
-;; from C for determining intervals.  Degree are for the key of C.  The degree
-;; in other keys is found by subtracting the degree of the key.
-(define note-data '((C 1 0) (D 2 2) (E 3 4) (F 4 5) (G 5 7) (A 6 9) (B 7 11)))
+;;; Analysis Internals
+
+;; Notes are encoded as the number of half steps from C for determining intervals and scale
+;; degrees from C for determining inversions.
+(define note-data '((C 0 0) (D 1 2) (E 2 4) (F 3 5) (G 4 7) (A 5 9) (B 6 11)))
 
 (define sharp #\#)  ; Unicode sharp and flat signs can be used with the utf8 and
 (define flat #\b)   ; utf8-srfi-13 extensions.
 
 ;; Return the natural note as a symbol and the number of half steps to add
 ;; according to the number of sharps or flats in the note name.
-;; (decode-note Bb) => B -1
-(define (decode-note note)
+;; (parse-note Bb) => B -1
+(define (parse-note note)
   (let ((note-str (symbol->string note)))
     (values (string->symbol
              (make-string 1 (string-ref note-str 0)))
@@ -55,76 +77,118 @@
 
 ;; Given a note name as a symbol (e.g 'A, 'F#, 'Bb) return the degree of the
 ;; scale in the given key.
-(define (note->degree note)
-  (let-values (((natural modifier) (decode-note note)))
+(define (note-degree note)
+  (let-values (((natural modifier) (parse-note note)))
     (cadr (assq natural note-data))))
 
 ;; Given a note name as a symbol (e.g 'A, 'F#, 'Bb) return the number of half
 ;; steps from C to that note.
-(define (note->half-step note)
-  (let-values (((natural modifier) (decode-note note)))
+(define (note-half-step note)
+  (let-values (((natural modifier) (parse-note note)))
     (+ (caddr (assq natural note-data))
        modifier)))
 
-;; The pattern of intervals for the chords we recognize.  Intervals are give as
-;; a number of half steps.  Triads must come first to avoid false matches with
-;; 7th chords.
-(define chord-intervals '((o     3 3 6)
-                          (m     3 4 5)
-                          (M     4 3 5)
-                          (o7    3 3 3 3)
-                          (o/7   3 3 4 2)
-                          (m7    3 4 3 2)
-                          (mmaj7 3 4 4 1)
-                          (M7    4 3 3 2)
-                          (Mmaj7 4 3 4 1)))
+;; Constructor and accessors for encoded notes.
+(define make-note-code cons)
+(define note-code-interval car)
+(define note-code-degree cdr)
 
-;; Return two values: a symbol that gives the chord quality (Mmaj7 = major 7th,
-;; m = minor triad, ...) and the inversion (0 = root, 1 = 1st, ...)
-(define (quality intervals)
-  (define (inversion 7th)
-    (match-lists intervals
-                 (append 7th (take 7th 2))))
-  (define (find-quality chord-intervals)
-    (if (null? chord-intervals)
-        (error "Couldn't identify intervals." intervals)
-        (let ((inv (inversion (cdar chord-intervals))))
-          (if inv
-              (values (caar chord-intervals) inv)
-              (find-quality (cdr chord-intervals))))))
-  (find-quality chord-intervals))
+;; Make a list of paired half-steps and degrees for the notes in 'chord'.
+(define (encode-chord chord)
+  ;;!! note-half-step and note-degree each parse the note.  Would be more efficient to parse
+  ;;!! once.  Note that note-degree is used by chord-degree below.
+  (let ((half-steps (map note-half-step chord))
+        (degrees (map note-degree chord)))
+    (map make-note-code half-steps degrees)))
 
-;; For elements in the cdr of 'half-steps', raise by an octave (add 12) if it's <
-;; the car.
-(define (raise half-steps)
-  (let ((first (car half-steps)))
+;; Compare the notes of an encoded chord according to the interval.
+(define (note-code< code-1 code-2)
+  (< (note-code-interval code-1)
+     (note-code-interval code-2)))
+
+;; Shift encoded notes by octaves so the 1st note is the lowest.  Shifted notes may have
+;; interval > 11 and degree > 6.
+(define (raise-notes chord-code)
+  (let ((first (car chord-code)))
     (cons first
-          (map (lambda (hs)
-                 (+ hs (if (< hs first) 12 0)))
-               (cdr half-steps)))))
+          (map (lambda (code)
+                 (let ((raise (note-code< code first)))
+                   (cons (+ (note-code-interval code)
+                            (if raise 12 0))
+                         (+ (note-code-degree code)
+                            (if raise 7 0)))))
+               (cdr chord-code)))))
+
+;; The pattern of intervals (half-steps) for triads.
+(define triad-intervals '((o 3 3 6)
+                          (m 3 4 5)
+                          (M 4 3 5)))
+
+(define triad-no-5th-intervals '((m 3 9)
+                                 (M 4 8)))
+
+;; The pattern of intervals (half-steps) for 7th chords.
+(define 7th-intervals '((o7  3 3 3 3)
+                        (m7  3 4 3 2)
+                        (o/7 3 3 4 2)
+                        (mM7 3 4 4 1)
+                        (M7  4 3 3 2)
+                        (MM7 4 3 4 1)))
+(define 7th-no-5th-intervals '((o7 3 6 3)
+                               (m7  3 7 2)
+                               (mM7 3 8 1)
+                               (M7  4 6 2)
+                               (MM7 4 7 1)))
+
+;; Scale degrees between notes for the kinds of chords we recognize.
+(define chord-degrees '((triad-no-5th 2 5)
+                        (triad        2 2 3)
+                        (7th-no-5th   2 4 1)
+                        (7th          2 2 2 1)))
+
+;;!! The no-5th intervals and degrees can be found from the others by adding the 2nd and 3rd
+;;!! elements.  The code could do it automatically, but I'm not sure it's worth the
+;;!! complexity.  Would need to resolve the ambiguity between diminished and minor.
+
+;; Return two values: a symbol that gives the chord quality (MM7 = major 7th,
+;; m = minor triad, ...) and the inversion (0 = root, 1 = 1st, ...)
+(define (quality notes)
+  (let-values (((class inversion)
+                (look-up (map cdr notes) chord-degrees)))
+    (values (look-up (map car notes)
+                     (case class
+                       ((triad-no-5th) triad-no-5th-intervals)
+                       ((triad) triad-intervals)
+                       ((7th-no-5th) 7th-no-5th-intervals)
+                       ((7th) 7th-intervals)
+                       (else '())))
+            inversion)))
 
 ;; Given a key name and the bass note name as symbols, and the inversion, return
 ;; the degree of the chord.
-(define (key-degree key bass-note inversion)
+(define (chord-degree key chord inversion)
   ;; Upcase the key name for looking up the degree.
   (let ((key (string->symbol (string-titlecase (symbol->string key)))))
-    (+ (modulo (- (note->degree bass-note)
-                  (note->degree key)
-                  (* 2 inversion))
-               7)
-       1)))
+    (modulo (- (note-degree (car chord))
+               (note-degree key)
+               (* 2 inversion))
+            7)))
 
-;; Return a list of the degree, quality, and inversion of 'chord' in 'key'.
+;;; Analysis Interface
+
+;; Return a list of the degree, quality, and inversion of 'chord' in 'key'.  'key' note name as
+;; a symbol, 'chord' is a list of such symbols.  Return (#f #f #f) for if analysis is
+;; unsuccessful. 
 (define (analyze key chord)
   (let-values (((qual inv)
-                (quality
-                 (diff
+                (quality 
+                 (pair-diff
                   (unique
                    (sort
-                    (raise
-                     (map note->half-step chord))
-                    <))))))
-    (list (key-degree key (car chord) inv)
+                    (raise-notes
+                     (encode-chord chord))
+                    note-code<))))))
+    (list (and inv (chord-degree key chord inv))
           qual
           inv)))
 
@@ -135,31 +199,28 @@
 
 ;;; Formatting
 
-;; Inversions of triads and 7th chords.
+;; Inversion symbols fo triads and 7th chords.
 (define inversions '#(("" . "7") ("6" . "65") ("64" . "43") (#f . "42")))
 
-(define roman '#(("I" . "i") ("II" . "ii") ("III" . "iii") ("IV" . "iv")
-                 ("V" . "v") ("VI" . "vi") ("VII" . "vii")))
+;; Roman numerals for scale degrees.
+(define roman '#("I" "II" "III" "IV" "V" "VI" "VII"))
 
+;; Return the string for the analyzed chord 'anl'.
 (define (format-chord anl)
-  (let ((deg (vector-ref roman (- (car anl) 1)))
-        (maj (or (eq? (cadr anl) 'M)
-                 (eq? (cadr anl) 'M7)
-                 (eq? (cadr anl) 'Mmaj7)))
-        (7th (or (eq? (cadr anl) 'o)
-                 (eq? (cadr anl) 'o/7)
-                 (eq? (cadr anl) 'm7)
-                 (eq? (cadr anl) 'mmaj7)
-                 (eq? (cadr anl) 'M7)
-                 (eq? (cadr anl) 'Mmaj7)))
-        (inv (vector-ref inversions (caddr anl))))
-    (string-append ((if maj car cdr) deg)
-                   (if (or (eq? (cadr anl) 'o)
-                           (eq? (cadr anl) 'o/))
-                       (symbol->string (cadr anl))
-                       "")
-                   ((if 7th cdr car) inv))))
+  ;; values is use as the identity function here and below.
+  (if (every values anl)
+      (let ((qual (symbol->string (cadr anl))))
+        (let ((deg (vector-ref roman (car anl)))
+              (maj (char=? (string-ref qual 0) #\M))
+              (dim (char=? (string-ref qual 0) #\o))
+              (7th (assq (cadr anl) 7th-intervals))
+              (inv (vector-ref inversions (caddr anl))))
+          (string-append ((if maj values string-downcase) deg)    ; Roman numeral
+                         (if dim (string-trim-right qual #\7) "") ; possible diminished sign
+                         ((if 7th cdr car) inv))))                ; inversion
+      "--")) ; Analysis failed if there are any #f's in the analyzed chord.
 
+;; Format a list of chords.
 (define (format-measure key chords)
   (string-join (map format-chord
                     (map (lambda (notes)
@@ -167,6 +228,7 @@
                          chords))
                " "))
 
+;; Format a list of lists of chords.  Include bar lines between the strings for the sublists.
 (define (format-analysis key measures)
   (string-append (symbol->string key)
                  ": "
