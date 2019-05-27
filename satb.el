@@ -22,13 +22,18 @@
 ;; example
 ;;   bes major
 ;;   2/4
-;;   | d''4 bes8 a8 | g4 ees8 f8 | f2 | f    |
+;;   | d'4 bes8 a8  | g4 ees8 f8 | f2 | f    |
 ;;   | f4 f         | ees ees    | c2 | d    |
 ;;   | bes4 bes     | bes bes    | a2 | bes  |
 ;;   | bes,4 d      | ees g      | f2 | bes, |
 ;;
 ;; The command satb-show formats the arrangement with Lillypond and displays the
-;; PDF output.  Satb-play plays the MIDI file produced by Lillypond.
+;; PDF output.  Satb-play plays the MIDI file produced by Lillypond.  Timidity
+;; is required for MIDI playback.
+;;
+;; Multiple arrangements may be put under different org-mode headlines.
+;; Satb-show formats the arrangement in the section that point is in.  Satb-play
+;; plays the MIDI file produced from the last time satb-show was called.
 
 ;;; Code
 
@@ -37,13 +42,16 @@
 
 (defvar satb-midi-instrument "acoustic grand")
 
-(defun satb->lilypond (key time soprano alto tenor bass)
+(defun satb->lilypond (title key time soprano alto tenor bass)
   "Make a string of Lillypond input from the arguments.
 KEY is a note name followed by 'major' or 'minor'.  TIME is the time
 signature.  SOPRANO, ALTO, TENOR, and BASS are the notes for the respective
 parts."
   (let ((key (string-join (split-string key) " \\")))
     (format "\\version \"2.18.2\"
+\\header {
+  title = \"%s\"
+}
 \\score {
   \\layout {}
   \\midi {}
@@ -68,22 +76,32 @@ parts."
     >>
   }
 }"
+            title
             satb-midi-instrument key time soprano alto
             satb-midi-instrument key tenor bass)))
+
+(defun satb-get-section ()
+  (interactive)
+  (save-excursion
+    (beginning-of-line)
+    (unless (looking-at "\\*")
+      (org-previous-visible-heading 1))
+    (re-search-forward "[^\\*]")
+    (let ((start (point)))
+      (org-next-visible-heading 1)
+      (split-string (buffer-substring-no-properties
+                     start
+                     (point))
+                    "\n"))))
 
 (defun satb-parse ()
   "Return a list of strings for constructing a Lillypond file."
   (interactive)
-  (goto-char (point-min))
   (let ((lines '()))
-    (while (< (point) (point-max))
-      (let ((line (car (split-string (buffer-substring-no-properties
-                                      (point-at-bol)
-                                      (point-at-eol))
-                                     "#"))))
+    (dolist (line-in (satb-get-section))
+      (let ((line (car (split-string line-in "#"))))
         (if (not (string-match "^[[:space:]]*$" line))
-            (setq lines (cons line lines))))
-      (forward-line))
+            (setq lines (cons line lines)))))
     (message "%s" (car lines))
     (reverse lines)))
 
@@ -107,7 +125,7 @@ An error is given if the current-buffer's file doesn't have an
                        (nth 5 source-attr))))))
 
 (defun satb-process ()
-  "Produce the Lillypond file from the SATB file in the current buffer."
+  "Produce the Lillypond file from the SATB file in the current section."
   (let ((lines (satb-parse)))
     ;; Generate the Lillypond file
     (find-file (satb-file "ly"))
@@ -118,11 +136,10 @@ An error is given if the current-buffer's file doesn't have an
   (bury-buffer))
 
 (defun satb-show ()
-  "Process the buffer and show the result."
+  "Process the arrangement in the current section and show the result."
   (interactive)
   (save-buffer)
-  (if (satb-old-p "pdf")
-      (satb-process))
+  (satb-process)
   (let ((pdf (satb-file "pdf")))
     (other-window 1)
     (find-file pdf)

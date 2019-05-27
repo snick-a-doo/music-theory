@@ -42,12 +42,13 @@ The parts are entered in an org-mode table.  For example
 ```
 bes major
 2/4
-| d''4 bes8 a8 | g4 ees8 f8 | f2 | f    |
+| d'4 bes8 a8  | g4 ees8 f8 | f2 | f    |
 | f4 f         | ees ees    | c2 | d    |
 | bes4 bes     | bes bes    | a2 | bes  |
 | bes,4 d      | ees g      | f2 | bes, |
 ````
 
-The command satb-show formats the arrangement with [Lillypond](http://lilypond.org/) and
-displays the PDF output.  Satb-play plays the MIDI file produced by Lillypond.
+The command satb-show formats the arrangement with [Lillypond](http://lilypond.org/) and displays the PDF output.  Satb-play plays the MIDI file produced by Lillypond.
 [Timidity](http://timidity.sourceforge.net/) is required for MIDI playback.
+
+Multiple arrangements may be put under different org-mode headlines.  Satb-show formats the arrangement in the section that point is in.  Satb-play plays the MIDI file produced from the last time satb-show was called.

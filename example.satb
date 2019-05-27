@@ -1,0 +1,41 @@
+# -*-satb-*-
+
+* Example 1
+c major
+3/4
+| c'4 c c | c c d | c b2\fermata | c4 b c | c2 d4 | c2 b4 | c2.\fermata |
+| e,4 f e | f f f | e d2         | e4 d c | f2 f4 | e2 d4 | e2.         |
+| g,4 a g | f a a | g g2         | g4 g g | a2 a4 | g2 g4 | g2.         |
+| c,4 c c | a f f | g g2         | c4 d e | f2 d4 | g2 g4 | c,2.        |
+
+* Example 10.3 a,b
+bes major
+4/4
+| d'4 ees c d       | d4 c c d        |
+| f,4   g f f       | f4 ees ees d    |
+| bes4  bes a bes   | bes4 g a bes    |
+| bes,4  ees f bes, | bes4 ees c bes  |
+
+* Example 10.3 c
+d minor
+4/4
+| d'4 d cis d  |
+| f,4 e e d    |
+| a4 g g f     |
+| d4 bes a bes |
+
+* Example 10.4
+e major
+2/4
+| b'4 cis   | cis cis | dis dis | e2   |
+| e,4 e     | e fis   | fis fis | gis2 |
+| gis,4 gis | a a     | b b     | b2   |
+| e,4 cis   | a fis   | b b     | e2   |
+
+* Example 10.5
+bes major
+2/4
+| d'4 bes8 a8 | g4 ees8 f8 | f2 | f    |
+| f4 f        | ees ees    | c2 | d    |
+| bes4 bes    | bes bes    | a2 | bes  |
+| bes,4 d     | ees g      | f2 | bes, |
