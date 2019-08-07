@@ -35,7 +35,7 @@ unique (x:y:ys)
   | otherwise = x : unique (y:ys)
 unique x = x
 
--- Return a list of differences between adjacent elements.
+-- Return a list of differences between adjacent pairs.
 pairDiff :: Num t => [(t, t)] -> [(t, t)]
 pairDiff (x:y:ys) = (fst y - fst x, snd y - snd x) : pairDiff (y:ys)
 pairDiff _ = []
@@ -46,17 +46,16 @@ pairDiff _ = []
 -- tuple of the value and the index where the key was matched. 
 lookUpWrap :: Eq a => [a] -> [([a], b)] -> Maybe (b, Int)
 lookUpWrap xs (t:ts) =
-  let match = matchList 0 xs $ extend (fst t) in
-  if fst match
-  then Just (snd t, snd match)
-  else lookUpWrap xs ts
+  case matchList 0 xs $ extend (fst t) of
+    Nothing -> lookUpWrap xs ts
+    Just index -> Just (snd t, index)
   where
     extend xs = xs ++ xs
     matchList n xs lst@(y:ys) =
       if xs == take (length xs) lst
-      then (True, n)
+      then Just n
       else matchList (n+1) xs ys
-    matchList n xs ys = (False, n)
+    matchList _ _ _ = Nothing
 lookUpWrap _ _ = Nothing
 
 -- Types
@@ -123,17 +122,15 @@ roman = A.listArray (0, 6) ["I", "II", "III", "IV", "V", "VI", "VII"]
 
 -- Internal Functions
 
+-- Convert a note string to a tuple of its degree and interval relative to C.
 encodeNote :: Note -> Maybe NoteCode
 encodeNote (natural:sharpsAndFlats) =
-  L.lookup natural noteDegrees >>=
-  (\degree -> L.lookup natural noteHalfSteps >>=
-    (\halfs -> return (degree, halfs + modifier)))
+  do degree <- L.lookup natural noteDegrees
+     halfs <- L.lookup natural noteHalfSteps
+     return (degree, halfs + modifier)
   where
     modifier = sum $ M.mapMaybe signHalfStep sharpsAndFlats
     signHalfStep sign = L.lookup sign noteSigns
-
-intervals :: [NoteCode] -> [NoteCode]
-intervals = pairDiff . unique . L.sort
 
 -- Shift encoded notes by octaves so the 1st note is the lowest.  Shifted notes
 -- have interval > 11 and degree > 6.
@@ -145,32 +142,33 @@ raiseNotes notes@(n:ns) =
     raiseAbove low note@(deg, int) =
       if note < low then (deg+7, int+12) else note
 
+-- Return a tuple of a string that gives the chord quality (M, m, o7, etc.) and
+-- the inversion as an integer.
 chordQuality :: [NoteCode] -> Maybe (Quality, Inversion)
 chordQuality [] = Nothing
 chordQuality notes =
-  lookUpWrap degrees chordDegrees >>=
-  (\(cClass, inversion) -> L.lookup cClass chordClasses >>=
-    (\qAList -> lookUpWrap intervals qAList >>=
-      (\(qual, _) -> return (qual, inversion))))
+  do (cClass, inversion) <- lookUpWrap degrees chordDegrees
+     qAList <- L.lookup cClass chordClasses
+     (qual, _) <- lookUpWrap intervals qAList
+     return (qual, inversion)
   where
     (degrees, intervals) = L.unzip notes
 
-noteDegree :: Natural -> Maybe Degree
-noteDegree natural = L.lookup natural noteDegrees
-
 chordDegree :: Key -> [Note] -> Inversion -> Maybe Degree
 chordDegree key chord inv =
-  (noteDegree . C.toUpper . head $ key) >>=
-  (\keyDeg -> (noteDegree . head . head $ chord) >>=
-    (\noteDeg -> return $ mod (noteDeg - keyDeg - 2*inv) 7))
+  do keyDeg <- (degree . C.toUpper . head $ key)
+     noteDeg <- (degree . head . head $ chord)
+     return $ mod (noteDeg - keyDeg - 2*inv) 7
+  where
+    degree natural = L.lookup natural noteDegrees
 
 -- Interface
 
 analyze :: Key -> String -> Maybe Analysis
 analyze key chordString =
-  (chordQuality . pairDiff . unique . L.sort . raiseNotes) chordCode >>=
-  (\(qual, inv) -> chordDegree key chord inv >>=
-    (\deg -> return $ Analysis deg qual inv))
+  do (qual, inv) <- (chordQuality . pairDiff . unique . L.sort . raiseNotes) chordCode
+     deg <- chordDegree key chord inv
+     return $ Analysis deg qual inv
   where
     chord = L.words chordString
     chordCode = M.mapMaybe encodeNote chord
@@ -213,7 +211,7 @@ haTests =
        ,"lookUpWrap" ~: "end" ~: Just ("triad no 5th", 1) ~=? (lookUpWrap [5,2] chordDegrees)
        ,"encodeNote" ~: "C" ~: [(0,0),(2,4),(4,7)] ~=? (M.mapMaybe encodeNote ["C","E","G"])
        ,"encodeNote" ~: "enharmonic" ~: [(0,2),(1,2),(2,2)] ~=? (M.mapMaybe encodeNote ["C##","D","Ebb"])
-       ,"intervals" ~: "C" ~: [(2,4),(2,3)] ~=? (intervals [(0,0),(2,4),(4,7)])
+       ,"encodeNote" ~: "nothing" ~: [(0,2),(2,2)] ~=? (M.mapMaybe encodeNote ["C##","Q","Ebb"])
        ,"chordDegree" ~: "DinC" ~: Just 1 ~=? (chordDegree "C" ["D","F#","A"] 0)
        ,"chordDegree" ~: "a#inF#" ~: Just 2 ~=? (chordDegree "F#" ["E#","A#","C#"] 2)
        ,"raiseNotes" ~: "A" ~: [(5,9),(7,13),(9,15)] ~=? (raiseNotes [(5,9),(0,1),(2,3)])
@@ -257,6 +255,7 @@ haTests =
        ,"format" ~: "V43" ~: "V43" ~=? (formatChord $ analyze "F#" "G# B E# C#")
        ,"format" ~: "I6" ~: "I6" ~=? (formatChord $ analyze "F#" "A# A# F# C#")
        ,"format" ~: "V42" ~: "V42" ~=? (formatChord $ analyze "F#" "B G# E# C#")
+       ,"format" ~: "--" ~: "--" ~=? (formatChord $ analyze "F#" "B C# D# E#")
        
        ,"format" ~: "measure" ~: "I V43 I6 V42"
         ~=? (formatMeasure "F#" ["F# A# F# C#", "G# B E# C#", "A# A# F# C#", "B G# E# C#"])
